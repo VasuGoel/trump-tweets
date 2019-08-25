@@ -28,11 +28,12 @@ We use the following libraries:
 library(tidyverse)
 library(lubridate)
 library(scales)
+library(dslabs)
 ```
 
 In general, we can extract data directly from Twitter using the __rtweet__ package. However, in this case, a group has already compiled data for us and made it available at [http://www.trumptwitterarchive.com](http://www.trumptwitterarchive.com). We can get the data from their JSON API using a script like this:
 
-```{r eval=FALSE, message=FALSE, warning=FALSE}
+```{r, message=FALSE, warning=FALSE}
 url <- 'http://www.trumptwitterarchive.com/data/realdonaldtrump/%s.json'
 trump_tweets <- map(2009:2017, ~sprintf(url, .x)) %>%
   map_df(jsonlite::fromJSON, simplifyDataFrame = TRUE) %>%
@@ -40,11 +41,6 @@ trump_tweets <- map(2009:2017, ~sprintf(url, .x)) %>%
   mutate(created_at = parse_date_time(created_at, 
                                       orders = "a b! d! H!:M!:S! z!* Y!",
                                       tz="EST")) 
-```
-
-```{r message=FALSE, warning=FALSE}
-library(dslabs)
-data(trump_tweets)
 ```
 
 You can see the data frame with information about the tweets by typing
@@ -358,3 +354,5 @@ android_iphone_or %>% inner_join(nrc, by = "word") %>%
   geom_bar(stat="identity", show.legend = FALSE) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ```
+
+This analysis solidifies the assertion made by __Todd Vaziri__ that "Every non-hyperbolic tweet is from iPhone (his staff). Every hyperbolic tweet is from Android (from him)."
