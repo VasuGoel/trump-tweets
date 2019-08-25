@@ -1,0 +1,235 @@
+---
+title: "Sentiment Analysis on Twitter Data"
+author: "Vasu Goel"
+date: "2019-7-30"
+output: html_document
+---
+
+---
+
+## Text mining
+
+In many applications, data starts as text. Well known examples are spam filtering, cyber-crime prevention, counter-terrorism and sentiment analysis. In all these cases, the raw data is composed of free form text. 
+Our task is to extract insights from these data. We generate useful numerical summaries from text data to which we can apply some of the powerful data visualization and analysis techniques.
+
+
+### <u>1. Case study: Trump tweets</u>
+
+During the 2016 US presidential election, then candidate Donald J. Trump used his twitter account as a way to communicate with potential voters. On August 6, 2016, Todd Vaziri tweeted^[https://twitter.com/tvaziri/status/762005541388378112/photo/1] about Trump that "Every non-hyperbolic tweet is from iPhone (his staff). Every hyperbolic tweet is from Android (from him)." 
+Data scientist David Robinson conducted an analysis^[http://varianceexplained.org/r/trump-tweets/] to determine if data supported this assertion. 
+I tried to recreate David's analysis by performing text mining procedures using R programming language.
+
+```{r,echo=FALSE}
+set.seed(2002)
+```
+
+We use the following libraries:
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(scales)
+```
+
+In general, we can extract data directly from Twitter using the __rtweet__ package. However, in this case, a group has already compiled data for us and made it available at [http://www.trumptwitterarchive.com](http://www.trumptwitterarchive.com). We can get the data from their JSON API using a script like this:
+
+```{r eval=FALSE, message=FALSE, warning=FALSE}
+url <- 'http://www.trumptwitterarchive.com/data/realdonaldtrump/%s.json'
+trump_tweets <- map(2009:2017, ~sprintf(url, .x)) %>%
+  map_df(jsonlite::fromJSON, simplifyDataFrame = TRUE) %>%
+  filter(!is_retweet & !str_detect(text, '^"')) %>%
+  mutate(created_at = parse_date_time(created_at, 
+                                      orders = "a b! d! H!:M!:S! z!* Y!",
+                                      tz="EST")) 
+```
+
+```{r message=FALSE, warning=FALSE}
+library(dslabs)
+data(trump_tweets)
+```
+
+You can see the data frame with information about the tweets by typing
+
+```{r, eval=FALSE}
+head(trump_tweets)
+```
+
+with the following variables included:
+
+```{r collapse=TRUE}
+names(trump_tweets)
+```
+
+The tweets are represented by the text variable:
+
+```{r collapse=TRUE}
+trump_tweets$text[16413] %>% str_wrap(width = options()$width) %>% cat
+```
+
+and the source variable tells us which device was used to compose and upload each tweet:
+
+```{r collapse=TRUE}
+trump_tweets %>% count(source) %>% arrange(desc(n)) %>% head(5)
+```
+
+We are interested in what happened during the campaign, so for this analysis we will focus on what was tweeted between the day Trump announced his campaign and election day. We define the following table containing just the tweets from that time period. Note that we use `extract` to remove the `Twitter for` part of the source and filter out retweets.
+
+```{r}
+campaign_tweets <- trump_tweets %>% 
+  extract(source, "source", "Twitter for (.*)") %>%
+  filter(source %in% c("Android", "iPhone") &
+           created_at >= ymd("2015-06-17") & 
+           created_at < ymd("2016-11-08")) %>%
+  filter(!is_retweet) %>%
+  arrange(created_at)
+```
+
+We can now use data visualization to explore the possibility that two different groups were tweeting from these devices. For each tweet, we will extract the hour, East Coast time (EST), it was tweeted and then compute the proportion of tweets tweeted at each hour for each device:
+
+```{r tweets-by-time-by-device ,out.width='50%', fig.align='center'}
+ds_theme_set()
+campaign_tweets %>%
+  mutate(hour = hour(with_tz(created_at, "EST"))) %>%
+  count(source, hour) %>%
+  group_by(source) %>%
+  mutate(percent = n / sum(n)) %>%
+  ungroup %>%
+  ggplot(aes(hour, percent, color = source)) +
+  geom_line() +
+  geom_point() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(x = "Hour of day (EST)", y = "% of tweets", color = "")
+```
+
+We notice a big peak for the Android in the early hours of the morning, between 6 and 8 AM. There seems to be a clear difference in these patterns. We will therefore assume that two different entities are using these two devices. 
+
+We will now study how the tweets differ when we compare Android to iPhone. To do this, we introduce the __tidytext__ package.
+
+
+### <u>2. Text as data</u>
+
+
+The __tidytext__ package helps us convert free form text into a tidy table. Having the data in this format greatly facilitates data visualization and the use of statistical techniques. 
+
+```{r message=FALSE, warning=FALSE}
+library(tidytext)
+```
+
+The main function needed to achieve this is `unnest_tokens`. A _token_ refers to a unit that we are considering to be a data point. The most common _token_ will be words, but they can also be single characters, ngrams, sentences, lines, or a pattern defined by a regex. The functions will take a vector of strings and extract the tokens so that each one gets a row in the new table. Let’s look at an example from the tweets:
+
+```{r collapse=TRUE}
+i <- 3008
+campaign_tweets$text[i] %>% str_wrap(width = 65) %>% cat()
+campaign_tweets[i,] %>% 
+  unnest_tokens(word, text) %>%
+  pull(word) 
+```
+
+Note that the function tries to convert tokens into words. To do this, however, it strips characters that are important in the context of twitter. Namely, the function removes all the `#` and `@`. A _token_ in the context of Twitter is not the same as in the context of spoken or written English. For this reason, instead of using the default, words, we define a regex that captures Twitter characters. We are defining a pattern that starts with @, # or neither, and is followed by any combination of letters or digits::
+
+```{r}
+pattern <- "([^A-Za-z\\d#@']|'(?![A-Za-z\\d#@]))"
+```
+
+We can now use the `unnest_tokens` function with the `regex` option and appropriately extract the hashtags and mentions. We demonstrate with our example tweet:
+
+```{r collapse=TRUE}
+campaign_tweets[i,] %>% 
+  unnest_tokens(word, text, token = "regex", pattern = pattern) %>%
+  pull(word)
+```
+
+Another minor adjustment we want to make is to remove the links to pictures:
+
+```{r, message=FALSE, warning=FALSE, collapse=TRUE}
+links <- "https://t.co/[A-Za-z\\d]+|&amp;"
+campaign_tweets[i,] %>% 
+  mutate(text = str_replace_all(text, links, ""))  %>%
+  unnest_tokens(word, text, token = "tweets") %>%
+  pull(word)
+```
+
+Now we are now ready to extract the words for all our tweets. 
+
+```{r, message=FALSE, warning=FALSE}
+tweet_words <- campaign_tweets %>% 
+  mutate(text = str_replace_all(text, links, ""))  %>%
+  unnest_tokens(word, text, token = "tweets") 
+```
+
+And we can now answer questions such as "what are the most commonly used words?":
+
+```{r collapse=TRUE}
+tweet_words %>% 
+  count(word) %>%
+  arrange(desc(n))
+```
+
+It is not surprising that these are the top words. The top words are not informative. The _tidytext_ package has a database of these commonly used words, referred to as _stop words_, in text mining:
+
+```{r collapse=TRUE}
+stop_words
+```
+
+If we filter out rows representing stop words with `filter(!word %in% stop_words$word)`:
+
+```{r, message=FALSE, warning=FALSE}
+tweet_words <- campaign_tweets %>% 
+  mutate(text = str_replace_all(text, links, ""))  %>%
+  unnest_tokens(word, text, token = "tweets") %>%
+  filter(!word %in% stop_words$word ) 
+```
+
+we end up with a much more informative set of top 10 tweeted words:
+
+```{r collapse=TRUE}
+tweet_words %>% 
+  count(word) %>%
+  top_n(10, n) %>%
+  mutate(word = reorder(word, n)) %>%
+  arrange(desc(n))
+```
+
+Some exploration of the resulting words (not shown here) reveals a couple of unwanted characteristics in our tokens. First, some of our tokens are just numbers (years, for example). We want to remove these and we can find them using the regex `^\d+$`. Second, some of our tokens come from a quote and they start with `'`. We want to remove the `'` when it is at the start of a word so we will just `str_replace`. We add these two lines to the code above to generate our final table:
+
+```{r, message=FALSE, warning=FALSE}
+tweet_words <- campaign_tweets %>% 
+  mutate(text = str_replace_all(text, links, ""))  %>%
+  unnest_tokens(word, text, token = "tweets") %>%
+  filter(!word %in% stop_words$word &
+           !str_detect(word, "^\\d+$")) %>%
+  mutate(word = str_replace(word, "^'", ""))
+```
+
+Now that we have all our words in a table, along with information about what device was used to compose the tweet they came from, we can start exploring which words are more common when comparing Android to iPhone. 
+
+For each word, we want to know if it is more likely to come from an Android tweet or an iPhone tweet. For each device and a given word, let's call it `y`, we compute the odds or the ratio between the proportion of words that are `y` and not `y` and compute the ratio of those odds. Here we will have many proportions that are 0, so we use the 0.5 correction.
+
+```{r, message=FALSE, warning=FALSE}
+android_iphone_or <- tweet_words %>%
+  count(word, source) %>%
+  spread(source, n, fill = 0) %>%
+  mutate(or = (Android + 0.5) / (sum(Android) - Android + 0.5) / 
+           ( (iPhone + 0.5) / (sum(iPhone) - iPhone + 0.5)))
+```
+
+Here are the highest odds ratios for Android
+
+```{r collapse=TRUE}
+android_iphone_or %>% arrange(desc(or))
+```
+
+and the top for iPhone:
+```{r collapse=TRUE}
+android_iphone_or %>% arrange(or)
+```  
+
+Given that several of these words are overall low frequency words, we can impose a filter based on the total frequency like this:
+
+```{r collapse=TRUE}
+android_iphone_or %>% filter(Android+iPhone > 100) %>%
+  arrange(desc(or))
+android_iphone_or %>% filter(Android+iPhone > 100) %>%
+  arrange(or)
+```
+
+We already see somewhat of a pattern in the types of words that are being tweeted more from one device versus the other. However, we are not interested in specific words but rather in the tone. Vaziri's assertion is that the Android tweets are more hyperbolic. So how can we check this with data? _Hyperbolic_ is a hard sentiment to extract from words as it relies on interpreting phrases. However, words can be associated to more basic sentiment such as anger, fear, joy, and surprise. In the next section, we demonstrate basic sentiment analysis.
