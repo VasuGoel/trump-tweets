@@ -85,7 +85,7 @@ campaign_tweets <- trump_tweets %>%
 
 We can now use data visualization to explore the possibility that two different groups were tweeting from these devices. For each tweet, we will extract the hour, East Coast time (EST), it was tweeted and then compute the proportion of tweets tweeted at each hour for each device:
 
-```{r tweets-by-time-by-device ,out.width='50%', fig.align='center'}
+```{r tweets-by-time-by-device ,out.width='75%', fig.align='center'}
 ds_theme_set()
 campaign_tweets %>%
   mutate(hour = hour(with_tz(created_at, "EST"))) %>%
@@ -233,3 +233,128 @@ android_iphone_or %>% filter(Android+iPhone > 100) %>%
 ```
 
 We already see somewhat of a pattern in the types of words that are being tweeted more from one device versus the other. However, we are not interested in specific words but rather in the tone. Vaziri's assertion is that the Android tweets are more hyperbolic. So how can we check this with data? _Hyperbolic_ is a hard sentiment to extract from words as it relies on interpreting phrases. However, words can be associated to more basic sentiment such as anger, fear, joy, and surprise. In the next section, we demonstrate basic sentiment analysis.
+
+
+### <u>3. Sentiment Analysis</u>
+
+
+In sentiment analysis, we assign a word to one or more “sentiments”. Although this approach will miss context dependent sentiments, such as sarcasm, when performed on large numbers of words, summaries can provide insights.
+
+The __tidytext__ package includes several maps or lexicons. We will also be using the __textdata__ package:
+
+```{r, message=FALSE, warning=FALSE}
+library(tidytext)
+library(textdata)
+```
+
+The first step in sentiment analysis is to assign a sentiment to each word. The __tidytext__ package includes several maps or lexicons in the object `sentiments`.
+
+The `bing` lexicon divides words into `positive` and `negative` sentiments. We can see this using the _tidytext_ function `get_sentiments`:
+
+```{r, eval=FALSE}
+get_sentiments("bing")
+```
+
+The `AFINN` lexicon assigns a score between -5 and 5, with -5 the most negative and 5 the most positive. Note that this lexicon needs to be downloaded the first time you call the function `get_sentiment`:
+
+```{r, eval=FALSE}
+get_sentiments("afinn")
+```
+
+The `loughran` and `nrc` lexicons provide several different sentiments. Note that these also have to be downloaded the first time you use them.
+
+```{r collapse=TRUE}
+get_sentiments("loughran") %>% count(sentiment)
+```
+
+```{r collapse=TRUE}
+get_sentiments("nrc") %>% count(sentiment)
+```
+
+For our analysis, we are interested in exploring the different sentiments of each tweet so we will use the `nrc` lexicon:
+
+```{r, message=FALSE, warning=FALSE}
+nrc <- get_sentiments("nrc") %>%
+  select(word, sentiment)
+```
+
+We can combine the words and sentiments using `inner_join`, which will only keep words associated with a sentiment. Here are 10 random words extracted from the tweets:
+
+```{r collape=TRUE}
+tweet_words %>% inner_join(nrc, by = "word") %>% 
+  select(source, word, sentiment) %>% 
+  sample_n(5)
+```
+
+Now we are ready to perform a quantitative analysis comparing Android and iPhone by comparing the sentiments of the tweets posted from each device. Here we could perform a tweet by tweet analysis, assigning a sentiment to each tweet. However, this will be challenging since each tweet will have several sentiments attached to it, one for each word appearing in the lexicon. For illustrative purposes, we will perform a much simpler analysis: we will count and compare the frequencies of each sentiment appearing in each device.
+
+```{r collapse=TRUE}
+sentiment_counts <- tweet_words %>%
+  left_join(nrc, by = "word") %>%
+  count(source, sentiment) %>%
+  spread(source, n) %>%
+  mutate(sentiment = replace_na(sentiment, replace = "none"))
+sentiment_counts
+```
+
+For each sentiment, we can compute the odds of being in the device: proportion of words with sentiment versus proportion of words without, and then compute the odds ratio comparing the two devices.
+
+```{r collapse=TRUE}
+sentiment_counts %>%
+  mutate(Android = Android / (sum(Android) - Android) , 
+         iPhone = iPhone / (sum(iPhone) - iPhone), 
+         or = Android/iPhone) %>%
+  arrange(desc(or))
+```
+
+So we do see some differences and the order is interesting: the largest three sentiments are disgust, anger, and negative! But are these differences just due to chance? How does this compare if we are just assigning sentiments at random? To answer this question we can compute, for each sentiment, an odds ratio and a confidence interval. We will add the two values we need to form a two-by-two table and the odds ratio:
+
+```{r, message=FALSE, warning=FALSE}
+library(broom)
+log_or <- sentiment_counts %>%
+  mutate(log_or = log((Android / (sum(Android) - Android)) / 
+      (iPhone / (sum(iPhone) - iPhone))),
+          se = sqrt(1/Android + 1/(sum(Android) - Android) + 
+                      1/iPhone + 1/(sum(iPhone) - iPhone)),
+          conf.low = log_or - qnorm(0.975)*se,
+          conf.high = log_or + qnorm(0.975)*se) %>%
+  arrange(desc(log_or))
+  
+log_or
+```
+
+A graphical visualization shows some sentiments that are clearly overrepresented:
+
+```{r tweets-log-odds-ratio, collapse=TRUE,out.width='75%', fig.align='center'}
+log_or %>%
+  mutate(sentiment = reorder(sentiment, log_or)) %>%
+  ggplot(aes(x = sentiment, ymin = conf.low, ymax = conf.high)) +
+  geom_errorbar() +
+  geom_point(aes(sentiment, log_or)) +
+  ylab("Log odds ratio for association between Android and sentiment") +
+  coord_flip() 
+```
+
+We see that the disgust, anger, negative, sadness and fear sentiments are associated with the Android in a way that is hard to explain by chance alone. Words not associated to a sentiment were strongly associated with the iPhone source, which is in agreement with the original claim about hyperbolic tweets.
+
+If we are interested in exploring which specific words are driving these differences, we can refer back to our `android_iphone_or` object:
+
+```{r collapse=TRUE}
+android_iphone_or %>% inner_join(nrc) %>%
+  filter(sentiment == "disgust" & Android + iPhone > 10) %>%
+  arrange(desc(or))
+``` 
+
+and we can make a graph:
+
+```{r log-odds-by-word, out.width="100%"}
+android_iphone_or %>% inner_join(nrc, by = "word") %>%
+  mutate(sentiment = factor(sentiment, levels = log_or$sentiment)) %>%
+  mutate(log_or = log(or)) %>%
+  filter(Android + iPhone > 10 & abs(log_or)>1) %>%
+  mutate(word = reorder(word, log_or)) %>%
+  ggplot(aes(word, log_or, fill = log_or < 0)) +
+  facet_wrap(~sentiment, scales = "free_x", nrow = 2) + 
+  geom_bar(stat="identity", show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
+```
