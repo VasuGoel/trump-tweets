@@ -2,7 +2,7 @@
 title: "Sentiment Analysis on Twitter Data"
 author: "Vasu Goel"
 date: "2019-7-30"
-output: html_document
+output: github_document
 ---
 
 ---
@@ -355,4 +355,4 @@ android_iphone_or %>% inner_join(nrc, by = "word") %>%
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) 
 ```
 
-This analysis solidifies the assertion made by __Todd Vaziri__ that "Every non-hyperbolic tweet is from iPhone (his staff). Every hyperbolic tweet is from Android (from him)."
+This analysis solidifies the assertion made by __Todd Vaziri__  about President Trump that, "Every non-hyperbolic tweet is from iPhone (his staff). Every hyperbolic tweet is from Android (from him)."
