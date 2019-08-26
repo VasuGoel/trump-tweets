@@ -175,7 +175,7 @@ the context of Twitter is not the same as in the context of spoken or
 written English. For this reason, instead of using the default, words,
 we define a regex that captures Twitter characters. We are defining a
 pattern that starts with @, \# or neither, and is followed by any
-combination of letters or digits::
+combination of letters or digits:
 
 ``` r
 pattern <- "([^A-Za-z\\d#@']|'(?![A-Za-z\\d#@]))"
@@ -215,7 +215,7 @@ campaign_tweets[i,] %>%
 ## [16] "winter"          "#maga"
 ```
 
-Now we are now ready to extract the words for all our tweets.
+Now we are now ready to extract the words for all our tweets:
 
 ``` r
 tweet_words <- campaign_tweets %>% 
